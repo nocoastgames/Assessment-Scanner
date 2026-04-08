@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -37,7 +37,7 @@ type Response = {
   timestamp: string;
 };
 
-type AppState = 'setup' | 'testing' | 'results';
+type AppState = 'setup' | 'splash' | 'testing' | 'results';
 
 type TestOption = {
   letter: string;
@@ -52,18 +52,20 @@ type TestQuestion = {
 };
 
 // --- Constants ---
-const OPTIONS = ['A', 'B', 'C'];
 const CLICK_SAFEGUARD_MS = 1000; // 1 second lockout between clicks
 
 export default function App() {
   // --- State ---
   const [appState, setAppState] = useState<AppState>('setup');
   const [testMode, setTestMode] = useState<'generic' | 'custom'>('generic');
-  const [testName, setTestName] = useState('Nevada Alternate Assessment');
+  const [testName, setTestName] = useState('');
   const [numQuestions, setNumQuestions] = useState(10);
+  const [genericType, setGenericType] = useState<'yes/no' | '1,2,3' | 'a,b,c'>('a,b,c');
+  const [numChoices, setNumChoices] = useState<1 | 2 | 3>(3);
   const [studentId, setStudentId] = useState('');
   const [scanSpeed, setScanSpeed] = useState(5000); // Default to 5 seconds per option
   const [isTTSActive, setIsTTSActive] = useState(true);
+  const [isAnnounceQuestionActive, setIsAnnounceQuestionActive] = useState(true);
   const [isCVIMode, setIsCVIMode] = useState(false);
   const [timeLimit, setTimeLimit] = useState(0); // 0 means no limit (minutes)
   
@@ -81,6 +83,15 @@ export default function App() {
 
   const actualNumQuestions = testMode === 'custom' ? questions.length : numQuestions;
 
+  const currentOptions = useMemo(() => {
+    let baseOptions = ['A', 'B', 'C'];
+    if (genericType === 'yes/no') baseOptions = ['Yes', 'No'];
+    else if (genericType === '1,2,3') baseOptions = ['1', '2', '3'];
+    else if (genericType === 'a,b,c') baseOptions = ['A', 'B', 'C'];
+    
+    return baseOptions.slice(0, numChoices);
+  }, [genericType, numChoices]);
+
   // --- TTS Helper ---
   const speak = useCallback((text: string) => {
     if (!isTTSActive) return;
@@ -94,7 +105,7 @@ export default function App() {
   useEffect(() => {
     if (isScanning && appState === 'testing') {
       scanInterval.current = setInterval(() => {
-        setCurrentIndex((prev) => (prev + 1) % OPTIONS.length);
+        setCurrentIndex((prev) => (prev + 1) % currentOptions.length);
       }, scanSpeed);
     } else {
       if (scanInterval.current) clearInterval(scanInterval.current);
@@ -102,17 +113,17 @@ export default function App() {
     return () => {
       if (scanInterval.current) clearInterval(scanInterval.current);
     };
-  }, [isScanning, scanSpeed, appState]);
+  }, [isScanning, scanSpeed, appState, currentOptions.length]);
 
   // --- Voice Sync Logic ---
   useEffect(() => {
     if (isScanning && appState === 'testing') {
       const currentQ = testMode === 'custom' ? questions[currentQuestion - 1] : null;
       const opt = currentQ?.options[currentIndex];
-      const textToSpeak = opt?.text ? `${opt.letter}. ${opt.text}` : OPTIONS[currentIndex];
+      const textToSpeak = opt?.text ? `${opt.letter}. ${opt.text}` : currentOptions[currentIndex];
       speak(textToSpeak);
     }
-  }, [currentIndex, isScanning, appState, speak, testMode, questions, currentQuestion]);
+  }, [currentIndex, isScanning, appState, speak, testMode, questions, currentQuestion, currentOptions]);
 
   // --- Switch Accessibility (Keyboard) ---
   useEffect(() => {
@@ -192,8 +203,43 @@ export default function App() {
     setResponses([]);
     setCurrentQuestion(1);
     setCurrentIndex(0);
-    setAppState('testing');
-    setIsScanning(true);
+    setIsScanning(false);
+    setAppState('splash');
+    if (isAnnounceQuestionActive) speak('Question 1');
+    setTimeout(() => {
+      setAppState('testing');
+      setIsScanning(true);
+    }, 2000);
+  };
+
+  const advanceToNextQuestion = (isNoResponse: boolean = false) => {
+    if (isNoResponse) {
+      setResponses((prev) => [
+        ...prev,
+        {
+          questionNumber: currentQuestion,
+          option: 'NR',
+          optionText: 'No Response',
+          timestamp: new Date().toLocaleTimeString(),
+        }
+      ]);
+      toast.info(`Question ${currentQuestion}: Logged as No Response`);
+    }
+
+    if (currentQuestion < actualNumQuestions) {
+      const nextQ = currentQuestion + 1;
+      setCurrentQuestion(nextQ);
+      setCurrentIndex(0);
+      setIsScanning(false);
+      setAppState('splash');
+      if (isAnnounceQuestionActive) speak(`Question ${nextQ}`);
+      setTimeout(() => {
+        setAppState('testing');
+        setIsScanning(true);
+      }, 2000);
+    } else {
+      handleFinishTest();
+    }
   };
 
   const handleSelect = () => {
@@ -203,7 +249,7 @@ export default function App() {
     }
     lastClickTime.current = now;
 
-    const selectedOption = OPTIONS[currentIndex];
+    const selectedOption = currentOptions[currentIndex];
     const currentQ = testMode === 'custom' ? questions[currentQuestion - 1] : null;
     const optData = currentQ?.options[currentIndex];
 
@@ -216,18 +262,16 @@ export default function App() {
 
     setResponses((prev) => [...prev, newResponse]);
     setIsScanning(false);
-    speak(optData?.text ? `${optData.text} selected.` : `${selectedOption} selected.`);
+    speak(optData?.text || selectedOption);
     toast.success(`Question ${currentQuestion}: Selected ${selectedOption}`);
+
+    setTimeout(() => {
+      advanceToNextQuestion(false);
+    }, 1500);
   };
 
-  const handleNextQuestion = () => {
-    if (currentQuestion < actualNumQuestions) {
-      setCurrentQuestion((prev) => prev + 1);
-      setCurrentIndex(0);
-      setIsScanning(true);
-    } else {
-      handleFinishTest();
-    }
+  const handleNoResponse = () => {
+    advanceToNextQuestion(true);
   };
 
   const handleFinishTest = () => {
@@ -315,17 +359,71 @@ export default function App() {
                   </div>
                 </div>
                 {testMode === 'generic' ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="numQuestions">Number of Questions</Label>
-                    <Input 
-                      id="numQuestions" 
-                      type="number" 
-                      value={numQuestions} 
-                      onChange={(e) => setNumQuestions(parseInt(e.target.value) || 1)}
-                      min="1"
-                      className="border-slate-200 focus:ring-slate-500"
-                    />
-                  </div>
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="numQuestions">Number of Questions</Label>
+                      <Input 
+                        id="numQuestions" 
+                        type="number" 
+                        value={numQuestions} 
+                        onChange={(e) => setNumQuestions(parseInt(e.target.value) || 1)}
+                        min="1"
+                        className="border-slate-200 focus:ring-slate-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Options Type</Label>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          variant={genericType === 'a,b,c' ? 'default' : 'outline'} 
+                          onClick={() => setGenericType('a,b,c')}
+                          className={genericType === 'a,b,c' ? 'bg-slate-900 text-white' : ''}
+                        >
+                          A, B, C
+                        </Button>
+                        <Button 
+                          variant={genericType === '1,2,3' ? 'default' : 'outline'} 
+                          onClick={() => setGenericType('1,2,3')}
+                          className={genericType === '1,2,3' ? 'bg-slate-900 text-white' : ''}
+                        >
+                          1, 2, 3
+                        </Button>
+                        <Button 
+                          variant={genericType === 'yes/no' ? 'default' : 'outline'} 
+                          onClick={() => setGenericType('yes/no')}
+                          className={genericType === 'yes/no' ? 'bg-slate-900 text-white' : ''}
+                        >
+                          Yes / No
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Number of Choices</Label>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          variant={numChoices === 1 ? 'default' : 'outline'} 
+                          onClick={() => setNumChoices(1)}
+                          className={numChoices === 1 ? 'bg-slate-900 text-white' : ''}
+                        >
+                          Errorless (1)
+                        </Button>
+                        <Button 
+                          variant={numChoices === 2 ? 'default' : 'outline'} 
+                          onClick={() => setNumChoices(2)}
+                          className={numChoices === 2 ? 'bg-slate-900 text-white' : ''}
+                        >
+                          2 Choices
+                        </Button>
+                        <Button 
+                          variant={numChoices === 3 ? 'default' : 'outline'} 
+                          onClick={() => setNumChoices(3)}
+                          className={numChoices === 3 ? 'bg-slate-900 text-white' : ''}
+                        >
+                          3 Choices
+                        </Button>
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <div className="space-y-2 flex flex-col justify-center">
                     <Label>Number of Questions</Label>
@@ -366,6 +464,18 @@ export default function App() {
                   <Switch 
                     checked={isTTSActive} 
                     onCheckedChange={setIsTTSActive} 
+                    className="data-[state=checked]:bg-slate-900"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Announce Question Number</Label>
+                    <p className="text-sm text-slate-500">Read "Question X" aloud on the splash screen.</p>
+                  </div>
+                  <Switch 
+                    checked={isAnnounceQuestionActive} 
+                    onCheckedChange={setIsAnnounceQuestionActive} 
                     className="data-[state=checked]:bg-slate-900"
                   />
                 </div>
@@ -531,8 +641,12 @@ export default function App() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 py-4">
-          {OPTIONS.map((option, index) => {
+        <div className={`grid grid-cols-1 gap-6 py-4 ${
+          currentOptions.length === 1 ? 'md:grid-cols-1 max-w-md mx-auto' : 
+          currentOptions.length === 2 ? 'md:grid-cols-2 max-w-4xl mx-auto' : 
+          'md:grid-cols-3'
+        }`}>
+          {currentOptions.map((option, index) => {
             const optData = currentQData?.options[index];
             
             return (
@@ -627,15 +741,14 @@ export default function App() {
             </Button>
             <Button 
               variant="secondary" 
-              onClick={handleNextQuestion}
-              disabled={isScanning || responses.length < currentQuestion}
+              onClick={handleNoResponse}
               className={`h-32 text-xl font-bold ${
                 isCVIMode 
                   ? 'bg-yellow-900/20 text-yellow-400 hover:bg-yellow-900/40 border-2 border-yellow-900/50' 
                   : 'bg-slate-100 hover:bg-slate-200 text-slate-900'
               }`}
             >
-              Next <ChevronRight className="ml-1" />
+              No Response <ChevronRight className="ml-1" />
             </Button>
           </div>
         </div>
@@ -679,6 +792,19 @@ export default function App() {
       </div>
     );
   };
+
+  const renderSplash = () => (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 1.1 }}
+      className="flex flex-col items-center justify-center min-h-[60vh]"
+    >
+      <h2 className={`text-6xl md:text-8xl font-black tracking-tighter ${isCVIMode ? 'text-yellow-400' : 'text-[#2B3990]'}`}>
+        Question {currentQuestion}
+      </h2>
+    </motion.div>
+  );
 
   const renderResults = () => (
     <motion.div 
@@ -775,6 +901,7 @@ export default function App() {
       <main className="pb-20">
         <AnimatePresence mode="wait">
           {appState === 'setup' && renderSetup()}
+          {appState === 'splash' && renderSplash()}
           {appState === 'testing' && renderTesting()}
           {appState === 'results' && renderResults()}
         </AnimatePresence>
