@@ -1,0 +1,5 @@
+{
+  "name": "Miller Scanner",
+  "description": "An adapted 3-option scanner for Nevada Alternate Assessment testing with CVI mode, customizable speed, TTS, and response recording.",
+  "requestFramePermissions": []
+}
