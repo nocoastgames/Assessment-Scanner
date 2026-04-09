@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -137,7 +137,7 @@ export default function App() {
       const currentQ = testMode === 'custom' ? questions[currentQuestion - 1] : null;
       const originalIndex = activeOptions[currentIndex]?.originalIndex;
       const opt = currentQ?.options[originalIndex];
-      const textToSpeak = opt?.text ? `${opt.letter}. ${opt.text}` : activeOptions[currentIndex]?.option;
+      const textToSpeak = opt?.text ? opt.text : activeOptions[currentIndex]?.option;
       if (textToSpeak) speak(textToSpeak);
     }
   }, [currentIndex, isScanning, appState, speak, testMode, questions, currentQuestion, activeOptions]);
