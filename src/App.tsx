@@ -78,6 +78,7 @@ export default function App() {
   const [isTwoAttemptsMode, setIsTwoAttemptsMode] = useState(false);
   const [isCVIMode, setIsCVIMode] = useState(false);
   const [timeLimit, setTimeLimit] = useState(0); // 0 means no limit (minutes)
+  const [noResponseTimeout, setNoResponseTimeout] = useState(0); // 0 means infinite (seconds)
   
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
   
@@ -268,7 +269,8 @@ export default function App() {
       isManualAdvanceActive,
       isCVIMode,
       scanSpeed,
-      timeLimit
+      timeLimit,
+      noResponseTimeout
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -305,6 +307,7 @@ export default function App() {
           if (data.isCVIMode !== undefined) setIsCVIMode(data.isCVIMode);
           if (data.scanSpeed !== undefined) setScanSpeed(data.scanSpeed);
           if (data.timeLimit !== undefined) setTimeLimit(data.timeLimit);
+          if (data.noResponseTimeout !== undefined) setNoResponseTimeout(data.noResponseTimeout);
           
           setTestMode('custom');
           toast.success('Question bank imported successfully');
@@ -380,6 +383,24 @@ export default function App() {
       handleFinishTest();
     }
   };
+
+  // --- No Response Timeout Logic ---
+  const advanceToNextQuestionRef = useRef(advanceToNextQuestion);
+  useEffect(() => {
+    advanceToNextQuestionRef.current = advanceToNextQuestion;
+  });
+
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    if (noResponseTimeout > 0 && appState === 'testing' && isScanning && !isWaitingForTeacher) {
+      timeoutId = setTimeout(() => {
+        advanceToNextQuestionRef.current(true);
+      }, noResponseTimeout * 1000);
+    }
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [noResponseTimeout, appState, isScanning, isWaitingForTeacher, currentQuestion, currentAttempt]);
 
   const handleSelect = async () => {
     const now = Date.now();
@@ -652,12 +673,23 @@ export default function App() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <Label htmlFor="timeLimit">Time Limit (Minutes, 0 = None)</Label>
+                  <Label htmlFor="timeLimit">Test Time Limit (Minutes, 0 = None)</Label>
                   <Input 
                     id="timeLimit" 
                     type="number" 
                     value={timeLimit} 
                     onChange={(e) => setTimeLimit(parseInt(e.target.value) || 0)}
+                    min="0"
+                    className="border-slate-200 focus:ring-slate-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="noResponseTimeout">No Response Timeout (Seconds, 0 = None)</Label>
+                  <Input 
+                    id="noResponseTimeout" 
+                    type="number" 
+                    value={noResponseTimeout} 
+                    onChange={(e) => setNoResponseTimeout(parseInt(e.target.value) || 0)}
                     min="0"
                     className="border-slate-200 focus:ring-slate-500"
                   />
