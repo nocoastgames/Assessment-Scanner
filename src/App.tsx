@@ -175,10 +175,11 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (appState !== 'testing') return;
       
-      if (isWaitingForTeacher && (e.key === 'Enter' || e.key === ' ')) {
-        e.preventDefault();
-        setIsWaitingForTeacher(false);
-        advanceToNextQuestion(false);
+      if (isWaitingForTeacher) {
+        // Block space/enter when waiting for teacher to force manual click
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+        }
         return;
       }
 
@@ -1036,7 +1037,7 @@ export default function App() {
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
             >
-              Next Question (Enter)
+              Next Question (Click Only)
             </Button>
           ) : (
             <Button 
