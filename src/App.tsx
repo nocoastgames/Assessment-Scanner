@@ -72,6 +72,7 @@ export default function App() {
   const [scanSpeed, setScanSpeed] = useState(5000); // Default to 5 seconds per option
   const [isTTSActive, setIsTTSActive] = useState(true);
   const [isAnnounceQuestionActive, setIsAnnounceQuestionActive] = useState(true);
+  const [isManualAdvanceActive, setIsManualAdvanceActive] = useState(false);
   const [isTwoAttemptsMode, setIsTwoAttemptsMode] = useState(false);
   const [isCVIMode, setIsCVIMode] = useState(false);
   const [timeLimit, setTimeLimit] = useState(0); // 0 means no limit (minutes)
@@ -83,6 +84,7 @@ export default function App() {
   const [eliminatedOptions, setEliminatedOptions] = useState<number[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
+  const [isWaitingForTeacher, setIsWaitingForTeacher] = useState(false);
   const [responses, setResponses] = useState<Response[]>([]);
   const [timeLeft, setTimeLeft] = useState(0); // seconds
 
@@ -147,7 +149,14 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (appState !== 'testing') return;
       
-      if (e.key === ' ' || e.key === 'Enter') {
+      if (isWaitingForTeacher && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        setIsWaitingForTeacher(false);
+        advanceToNextQuestion(false);
+        return;
+      }
+
+      if (!isWaitingForTeacher && (e.key === ' ' || e.key === 'Enter')) {
         e.preventDefault();
         handleSelect();
       }
@@ -155,7 +164,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [appState, currentIndex]); // currentIndex needed for handleSelect closure if not using refs
+  }, [appState, currentIndex, isWaitingForTeacher]); // currentIndex needed for handleSelect closure if not using refs
 
   // --- Timer Logic ---
   useEffect(() => {
@@ -227,6 +236,7 @@ export default function App() {
       isTwoAttemptsMode,
       isTTSActive,
       isAnnounceQuestionActive,
+      isManualAdvanceActive,
       isCVIMode,
       scanSpeed,
       timeLimit
@@ -261,6 +271,7 @@ export default function App() {
           if (data.isTwoAttemptsMode !== undefined) setIsTwoAttemptsMode(data.isTwoAttemptsMode);
           if (data.isTTSActive !== undefined) setIsTTSActive(data.isTTSActive);
           if (data.isAnnounceQuestionActive !== undefined) setIsAnnounceQuestionActive(data.isAnnounceQuestionActive);
+          if (data.isManualAdvanceActive !== undefined) setIsManualAdvanceActive(data.isManualAdvanceActive);
           if (data.isCVIMode !== undefined) setIsCVIMode(data.isCVIMode);
           if (data.scanSpeed !== undefined) setScanSpeed(data.scanSpeed);
           if (data.timeLimit !== undefined) setTimeLimit(data.timeLimit);
@@ -294,6 +305,7 @@ export default function App() {
     setEliminatedOptions([]);
     setCurrentIndex(0);
     setIsScanning(false);
+    setIsWaitingForTeacher(false);
     setAppState('splash');
     if (isAnnounceQuestionActive) speak('Question 1');
     setTimeout(() => {
@@ -303,6 +315,7 @@ export default function App() {
   };
 
   const advanceToNextQuestion = (isNoResponse: boolean = false) => {
+    setIsWaitingForTeacher(false);
     if (isNoResponse) {
       setResponses((prev) => [
         ...prev,
@@ -367,7 +380,8 @@ export default function App() {
           setIsScanning(false);
           speak(optData?.text || selectedOption);
           toast.success(`Question ${currentQuestion}: Selected ${selectedOption} (Correct)`);
-          setTimeout(() => advanceToNextQuestion(false), 1500);
+          if (isManualAdvanceActive) setIsWaitingForTeacher(true);
+          else setTimeout(() => advanceToNextQuestion(false), 1500);
         } else {
           setResponses((prev) => [...prev, newResponse]);
           setEliminatedOptions((prev) => [...prev, originalIndex]);
@@ -380,7 +394,7 @@ export default function App() {
           toast.error(`Question ${currentQuestion}: Selected ${selectedOption} (Incorrect). Try again.`);
           
           setTimeout(() => {
-            setIsScanning(true);
+            if (!isManualAdvanceActive) setIsScanning(true);
           }, 3000);
         }
       } else {
@@ -388,14 +402,16 @@ export default function App() {
         setIsScanning(false);
         speak(optData?.text || selectedOption);
         toast.info(`Question ${currentQuestion}: Selected ${selectedOption} (Attempt 2)`);
-        setTimeout(() => advanceToNextQuestion(false), 1500);
+        if (isManualAdvanceActive) setIsWaitingForTeacher(true);
+        else setTimeout(() => advanceToNextQuestion(false), 1500);
       }
     } else {
       setResponses((prev) => [...prev, newResponse]);
       setIsScanning(false);
       speak(optData?.text || selectedOption);
       toast.success(`Question ${currentQuestion}: Selected ${selectedOption}`);
-      setTimeout(() => advanceToNextQuestion(false), 1500);
+      if (isManualAdvanceActive) setIsWaitingForTeacher(true);
+      else setTimeout(() => advanceToNextQuestion(false), 1500);
     }
   };
 
@@ -405,6 +421,7 @@ export default function App() {
 
   const handleFinishTest = () => {
     setIsScanning(false);
+    setIsWaitingForTeacher(false);
     setAppState('results');
     speak('Test completed. Reviewing results.');
   };
@@ -412,6 +429,7 @@ export default function App() {
   const handleReset = () => {
     setAppState('setup');
     setIsScanning(false);
+    setIsWaitingForTeacher(false);
   };
 
   const exportToCSV = () => {
@@ -635,6 +653,18 @@ export default function App() {
                   <Switch 
                     checked={isAnnounceQuestionActive} 
                     onCheckedChange={setIsAnnounceQuestionActive} 
+                    className="data-[state=checked]:bg-slate-900"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Teacher Manual Advance</Label>
+                    <p className="text-sm text-slate-500">Wait for teacher to advance to the next question after a response.</p>
+                  </div>
+                  <Switch 
+                    checked={isManualAdvanceActive} 
+                    onCheckedChange={setIsManualAdvanceActive} 
                     className="data-[state=checked]:bg-slate-900"
                   />
                 </div>
@@ -931,17 +961,33 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Button 
-            onClick={handleSelect}
-            disabled={!isScanning}
-            className={`h-32 text-4xl font-black uppercase tracking-tighter shadow-xl ${
-              isCVIMode 
-                ? 'bg-yellow-400 text-black hover:bg-yellow-300 disabled:bg-yellow-900/50' 
-                : 'bg-slate-900 hover:bg-slate-800 disabled:opacity-50'
-            }`}
-          >
-            Select (Space / Enter)
-          </Button>
+          {isWaitingForTeacher ? (
+            <Button 
+              onClick={() => {
+                setIsWaitingForTeacher(false);
+                advanceToNextQuestion(false);
+              }}
+              className={`h-32 text-4xl font-black uppercase tracking-tighter shadow-xl ${
+                isCVIMode 
+                  ? 'bg-emerald-400 text-black hover:bg-emerald-300' 
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+            >
+              Next Question (Enter)
+            </Button>
+          ) : (
+            <Button 
+              onClick={handleSelect}
+              disabled={!isScanning}
+              className={`h-32 text-4xl font-black uppercase tracking-tighter shadow-xl ${
+                isCVIMode 
+                  ? 'bg-yellow-400 text-black hover:bg-yellow-300 disabled:bg-yellow-900/50' 
+                  : 'bg-slate-900 hover:bg-slate-800 disabled:opacity-50'
+              }`}
+            >
+              Select (Space / Enter)
+            </Button>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Button 
               variant="outline" 
