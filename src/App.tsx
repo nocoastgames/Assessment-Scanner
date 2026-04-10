@@ -71,6 +71,7 @@ export default function App() {
   const [studentId, setStudentId] = useState('');
   const [scanSpeed, setScanSpeed] = useState(5000); // Default to 5 seconds per option
   const [isTTSActive, setIsTTSActive] = useState(true);
+  const [ttsCycleLimit, setTtsCycleLimit] = useState(0); // 0 = infinite
   const [isAnnounceQuestionActive, setIsAnnounceQuestionActive] = useState(true);
   const [isManualAdvanceActive, setIsManualAdvanceActive] = useState(false);
   const [isTwoAttemptsMode, setIsTwoAttemptsMode] = useState(false);
@@ -91,6 +92,7 @@ export default function App() {
   const lastClickTime = useRef(0);
   const scanInterval = useRef<NodeJS.Timeout | null>(null);
   const timerInterval = useRef<NodeJS.Timeout | null>(null);
+  const cycleCountRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const actualNumQuestions = testMode === 'custom' ? questions.length : numQuestions;
@@ -111,38 +113,62 @@ export default function App() {
   }, [currentOptions, eliminatedOptions]);
 
   // --- TTS Helper ---
-  const speak = useCallback((text: string) => {
-    if (!isTTSActive) return;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.8; // Slightly slower for clarity
-    window.speechSynthesis.speak(utterance);
+  const speak = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!isTTSActive) {
+        resolve();
+        return;
+      }
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = 0.8; // Slightly slower for clarity
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      window.speechSynthesis.speak(utterance);
+    });
   }, [isTTSActive]);
 
-  // --- Scanning Logic ---
+  // --- Scanning & Voice Sync Logic ---
   useEffect(() => {
-    if (isScanning && appState === 'testing' && activeOptions.length > 0) {
-      scanInterval.current = setInterval(() => {
-        setCurrentIndex((prev) => (prev + 1) % activeOptions.length);
-      }, scanSpeed);
-    } else {
-      if (scanInterval.current) clearInterval(scanInterval.current);
-    }
-    return () => {
-      if (scanInterval.current) clearInterval(scanInterval.current);
-    };
-  }, [isScanning, scanSpeed, appState, activeOptions.length]);
+    let isCancelled = false;
+    let timeoutId: NodeJS.Timeout;
 
-  // --- Voice Sync Logic ---
-  useEffect(() => {
-    if (isScanning && appState === 'testing' && activeOptions.length > 0) {
+    const runScanStep = async () => {
+      if (!isScanning || appState !== 'testing' || activeOptions.length === 0) return;
+
       const currentQ = testMode === 'custom' ? questions[currentQuestion - 1] : null;
       const originalIndex = activeOptions[currentIndex]?.originalIndex;
       const opt = currentQ?.options[originalIndex];
       const textToSpeak = opt?.text ? opt.text : activeOptions[currentIndex]?.option;
-      if (textToSpeak) speak(textToSpeak);
-    }
-  }, [currentIndex, isScanning, appState, speak, testMode, questions, currentQuestion, activeOptions]);
+
+      const shouldSpeak = ttsCycleLimit === 0 || cycleCountRef.current < ttsCycleLimit;
+
+      const timerPromise = new Promise<void>(resolve => {
+        timeoutId = setTimeout(resolve, scanSpeed);
+      });
+
+      const speechPromise = (textToSpeak && shouldSpeak) ? speak(textToSpeak) : Promise.resolve();
+
+      await Promise.all([timerPromise, speechPromise]);
+
+      if (!isCancelled && isScanning && appState === 'testing') {
+        setCurrentIndex((prev) => {
+          const nextIndex = (prev + 1) % activeOptions.length;
+          if (nextIndex === 0) {
+            cycleCountRef.current += 1;
+          }
+          return nextIndex;
+        });
+      }
+    };
+
+    runScanStep();
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [currentIndex, isScanning, appState, activeOptions, scanSpeed, testMode, questions, currentQuestion, speak]);
 
   // --- Switch Accessibility (Keyboard) ---
   useEffect(() => {
@@ -235,6 +261,7 @@ export default function App() {
       questions,
       isTwoAttemptsMode,
       isTTSActive,
+      ttsCycleLimit,
       isAnnounceQuestionActive,
       isManualAdvanceActive,
       isCVIMode,
@@ -270,6 +297,7 @@ export default function App() {
           if (data.testName !== undefined) setTestName(data.testName);
           if (data.isTwoAttemptsMode !== undefined) setIsTwoAttemptsMode(data.isTwoAttemptsMode);
           if (data.isTTSActive !== undefined) setIsTTSActive(data.isTTSActive);
+          if (data.ttsCycleLimit !== undefined) setTtsCycleLimit(data.ttsCycleLimit);
           if (data.isAnnounceQuestionActive !== undefined) setIsAnnounceQuestionActive(data.isAnnounceQuestionActive);
           if (data.isManualAdvanceActive !== undefined) setIsManualAdvanceActive(data.isManualAdvanceActive);
           if (data.isCVIMode !== undefined) setIsCVIMode(data.isCVIMode);
@@ -304,6 +332,7 @@ export default function App() {
     setCurrentAttempt(1);
     setEliminatedOptions([]);
     setCurrentIndex(0);
+    cycleCountRef.current = 0;
     setIsScanning(false);
     setIsWaitingForTeacher(false);
     setAppState('splash');
@@ -337,6 +366,7 @@ export default function App() {
       setCurrentAttempt(1);
       setEliminatedOptions([]);
       setCurrentIndex(0);
+      cycleCountRef.current = 0;
       setIsScanning(false);
       setAppState('splash');
       if (isAnnounceQuestionActive) speak(`Question ${nextQ}`);
@@ -349,7 +379,7 @@ export default function App() {
     }
   };
 
-  const handleSelect = () => {
+  const handleSelect = async () => {
     const now = Date.now();
     if (now - lastClickTime.current < CLICK_SAFEGUARD_MS) {
       return; // Safeguard against rapid clicks
@@ -378,40 +408,51 @@ export default function App() {
         if (optData?.isCorrect) {
           setResponses((prev) => [...prev, newResponse]);
           setIsScanning(false);
-          speak(optData?.text || selectedOption);
           toast.success(`Question ${currentQuestion}: Selected ${selectedOption} (Correct)`);
+          await Promise.all([
+            speak(optData?.text || selectedOption),
+            new Promise(resolve => setTimeout(resolve, 1500))
+          ]);
           if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-          else setTimeout(() => advanceToNextQuestion(false), 1500);
+          else advanceToNextQuestion(false);
         } else {
           setResponses((prev) => [...prev, newResponse]);
           setEliminatedOptions((prev) => [...prev, originalIndex]);
           setCurrentAttempt(2);
           setCurrentIndex(0);
+          cycleCountRef.current = 0;
           setIsScanning(false);
           
           const promptToRead = currentQ?.alternatePrompt || currentQ?.questionText || 'Try again';
-          speak(promptToRead);
           toast.error(`Question ${currentQuestion}: Selected ${selectedOption} (Incorrect). Try again.`);
+          await Promise.all([
+            speak(promptToRead),
+            new Promise(resolve => setTimeout(resolve, 3000))
+          ]);
           
-          setTimeout(() => {
-            if (!isManualAdvanceActive) setIsScanning(true);
-          }, 3000);
+          if (!isManualAdvanceActive) setIsScanning(true);
         }
       } else {
         setResponses((prev) => [...prev, newResponse]);
         setIsScanning(false);
-        speak(optData?.text || selectedOption);
         toast.info(`Question ${currentQuestion}: Selected ${selectedOption} (Attempt 2)`);
+        await Promise.all([
+          speak(optData?.text || selectedOption),
+          new Promise(resolve => setTimeout(resolve, 1500))
+        ]);
         if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-        else setTimeout(() => advanceToNextQuestion(false), 1500);
+        else advanceToNextQuestion(false);
       }
     } else {
       setResponses((prev) => [...prev, newResponse]);
       setIsScanning(false);
-      speak(optData?.text || selectedOption);
       toast.success(`Question ${currentQuestion}: Selected ${selectedOption}`);
+      await Promise.all([
+        speak(optData?.text || selectedOption),
+        new Promise(resolve => setTimeout(resolve, 1500))
+      ]);
       if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-      else setTimeout(() => advanceToNextQuestion(false), 1500);
+      else advanceToNextQuestion(false);
     }
   };
 
@@ -430,6 +471,7 @@ export default function App() {
     setAppState('setup');
     setIsScanning(false);
     setIsWaitingForTeacher(false);
+    cycleCountRef.current = 0;
   };
 
   const exportToCSV = () => {
@@ -679,6 +721,27 @@ export default function App() {
                     onCheckedChange={setIsTwoAttemptsMode} 
                     className="data-[state=checked]:bg-slate-900"
                   />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex justify-between">
+                    <Label>Read Answers Limit (Cycles)</Label>
+                    <span className="text-sm font-mono font-bold text-slate-600">
+                      {ttsCycleLimit === 0 ? 'Infinite' : ttsCycleLimit}
+                    </span>
+                  </div>
+                  <Slider 
+                    value={[ttsCycleLimit]} 
+                    onValueChange={(val) => setTtsCycleLimit(Array.isArray(val) ? val[0] : val)} 
+                    min={0} 
+                    max={10} 
+                    step={1}
+                    className="py-4"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 uppercase font-bold tracking-widest">
+                    <span>Infinite (0)</span>
+                    <span>10</span>
+                  </div>
                 </div>
 
                 <div className="space-y-3">
