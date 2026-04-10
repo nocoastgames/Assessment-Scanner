@@ -66,6 +66,7 @@ export default function App() {
   const [testMode, setTestMode] = useState<'generic' | 'custom'>('generic');
   const [testName, setTestName] = useState('');
   const [numQuestions, setNumQuestions] = useState(10);
+  const [startQuestion, setStartQuestion] = useState(1);
   const [genericType, setGenericType] = useState<'yes/no' | '1,2,3' | 'a,b,c'>('a,b,c');
   const [numChoices, setNumChoices] = useState<1 | 2 | 3>(3);
   const [studentId, setStudentId] = useState('');
@@ -329,7 +330,7 @@ export default function App() {
       return;
     }
     setResponses([]);
-    setCurrentQuestion(1);
+    setCurrentQuestion(startQuestion);
     setCurrentAttempt(1);
     setEliminatedOptions([]);
     setCurrentIndex(0);
@@ -337,7 +338,7 @@ export default function App() {
     setIsScanning(false);
     setIsWaitingForTeacher(false);
     setAppState('splash');
-    if (isAnnounceQuestionActive) speak('Question 1');
+    if (isAnnounceQuestionActive) speak(`Question ${startQuestion}`);
     setTimeout(() => {
       setAppState('testing');
       setIsScanning(true);
@@ -658,6 +659,21 @@ export default function App() {
                     value={timeLimit} 
                     onChange={(e) => setTimeLimit(parseInt(e.target.value) || 0)}
                     min="0"
+                    className="border-slate-200 focus:ring-slate-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="startQuestion">Start at Question</Label>
+                  <Input 
+                    id="startQuestion" 
+                    type="number" 
+                    value={startQuestion} 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 1;
+                      setStartQuestion(Math.min(Math.max(1, val), actualNumQuestions || 1));
+                    }}
+                    min="1"
+                    max={actualNumQuestions || 1}
                     className="border-slate-200 focus:ring-slate-500"
                   />
                 </div>
