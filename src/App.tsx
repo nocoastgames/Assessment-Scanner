@@ -48,6 +48,7 @@ type TestOption = {
   text: string;
   image: string | null;
   isCorrect?: boolean;
+  isActive?: boolean;
 };
 
 type TestQuestion = {
@@ -72,6 +73,7 @@ export default function App() {
   const [studentId, setStudentId] = useState('');
   const [scanSpeed, setScanSpeed] = useState(5000); // Default to 5 seconds per option
   const [isTTSActive, setIsTTSActive] = useState(true);
+  const [ttsVoice, setTtsVoice] = useState<'female' | 'male'>('female');
   const [ttsCycleLimit, setTtsCycleLimit] = useState(0); // 0 = infinite
   const [isAnnounceQuestionActive, setIsAnnounceQuestionActive] = useState(true);
   const [isManualAdvanceActive, setIsManualAdvanceActive] = useState(false);
@@ -105,16 +107,34 @@ export default function App() {
     else if (genericType === '1,2,3') baseOptions = ['1', '2', '3'];
     else if (genericType === 'a,b,c') baseOptions = ['A', 'B', 'C'];
     
+    if (testMode === 'custom') {
+      return baseOptions;
+    }
     return baseOptions.slice(0, numChoices);
-  }, [genericType, numChoices]);
+  }, [genericType, numChoices, testMode]);
 
   const activeOptions = useMemo(() => {
-    return currentOptions
-      .map((opt, index) => ({ option: opt, originalIndex: index }))
-      .filter(item => !eliminatedOptions.includes(item.originalIndex));
-  }, [currentOptions, eliminatedOptions]);
+    let opts = currentOptions.map((opt, index) => ({ option: opt, originalIndex: index }));
+    
+    if (testMode === 'custom') {
+      const currentQ = questions[currentQuestion - 1];
+      if (currentQ) {
+        opts = opts.filter(item => {
+          const optData = currentQ.options[item.originalIndex];
+          return optData?.isActive !== false;
+        });
+      }
+    }
+    
+    return opts.filter(item => !eliminatedOptions.includes(item.originalIndex));
+  }, [currentOptions, eliminatedOptions, testMode, questions, currentQuestion]);
 
   // --- TTS Helper ---
+  useEffect(() => {
+    // Trigger voice loading
+    window.speechSynthesis.getVoices();
+  }, []);
+
   const speak = useCallback((text: string): Promise<void> => {
     return new Promise((resolve) => {
       if (!isTTSActive) {
@@ -124,11 +144,28 @@ export default function App() {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.8; // Slightly slower for clarity
+      
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        let selectedVoice = voices.find(v => 
+          ttsVoice === 'female' 
+            ? (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('victoria'))
+            : (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('alex') || v.name.toLowerCase().includes('daniel'))
+        );
+        
+        if (!selectedVoice) {
+           selectedVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
+        }
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+        }
+      }
+
       utterance.onend = () => resolve();
       utterance.onerror = () => resolve();
       window.speechSynthesis.speak(utterance);
     });
-  }, [isTTSActive]);
+  }, [isTTSActive, ttsVoice]);
 
   // --- Scanning & Voice Sync Logic ---
   useEffect(() => {
@@ -221,9 +258,9 @@ export default function App() {
       id: Date.now().toString() + Math.random().toString(),
       questionText: '',
       options: [
-        { letter: 'A', text: '', image: null },
-        { letter: 'B', text: '', image: null },
-        { letter: 'C', text: '', image: null },
+        { letter: 'A', text: '', image: null, isActive: true },
+        { letter: 'B', text: '', image: null, isActive: true },
+        { letter: 'C', text: '', image: null, isActive: true },
       ]
     }]);
   };
@@ -240,7 +277,7 @@ export default function App() {
     setQuestions(questions.map(q => q.id === id ? { ...q, alternatePrompt: text } : q));
   };
 
-  const updateOption = (qId: string, optIndex: number, field: 'text' | 'image' | 'isCorrect', value: string | null | boolean) => {
+  const updateOption = (qId: string, optIndex: number, field: 'text' | 'image' | 'isCorrect' | 'isActive', value: string | null | boolean) => {
     setQuestions(questions.map(q => {
       if (q.id !== qId) return q;
       const newOptions = [...q.options];
@@ -264,6 +301,7 @@ export default function App() {
       questions,
       isTwoAttemptsMode,
       isTTSActive,
+      ttsVoice,
       ttsCycleLimit,
       isAnnounceQuestionActive,
       isManualAdvanceActive,
@@ -301,6 +339,7 @@ export default function App() {
           if (data.testName !== undefined) setTestName(data.testName);
           if (data.isTwoAttemptsMode !== undefined) setIsTwoAttemptsMode(data.isTwoAttemptsMode);
           if (data.isTTSActive !== undefined) setIsTTSActive(data.isTTSActive);
+          if (data.ttsVoice !== undefined) setTtsVoice(data.ttsVoice);
           if (data.ttsCycleLimit !== undefined) setTtsCycleLimit(data.ttsCycleLimit);
           if (data.isAnnounceQuestionActive !== undefined) setIsAnnounceQuestionActive(data.isAnnounceQuestionActive);
           if (data.isManualAdvanceActive !== undefined) setIsManualAdvanceActive(data.isManualAdvanceActive);
@@ -738,6 +777,29 @@ export default function App() {
 
                 <div className="flex justify-between items-center">
                   <div className="space-y-0.5">
+                    <Label className="text-base">TTS Voice</Label>
+                    <p className="text-sm text-slate-500">Select male or female voice for reading.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant={ttsVoice === 'female' ? 'default' : 'outline'} 
+                      onClick={() => setTtsVoice('female')}
+                      className={ttsVoice === 'female' ? 'bg-slate-900 text-white' : ''}
+                    >
+                      Female
+                    </Button>
+                    <Button 
+                      variant={ttsVoice === 'male' ? 'default' : 'outline'} 
+                      onClick={() => setTtsVoice('male')}
+                      className={ttsVoice === 'male' ? 'bg-slate-900 text-white' : ''}
+                    >
+                      Male
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="space-y-0.5">
                     <Label className="text-base">Announce Question Number</Label>
                     <p className="text-sm text-slate-500">Read "Question X" aloud on the splash screen.</p>
                   </div>
@@ -875,17 +937,28 @@ export default function App() {
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {q.options.map((opt, optIndex) => (
-                          <div key={opt.letter} className={`p-4 border rounded-xl space-y-4 bg-white shadow-sm ${opt.isCorrect ? 'ring-2 ring-emerald-500 border-emerald-500' : ''}`}>
-                            <div className="flex justify-between items-center border-b pb-2">
-                              <Label className="font-black text-xl text-slate-800">Option {opt.letter}</Label>
-                              <div className="flex items-center gap-2">
-                                <Label htmlFor={`correct-${q.id}-${optIndex}`} className="text-xs font-bold text-slate-500 cursor-pointer">Correct</Label>
-                                <Switch 
-                                  id={`correct-${q.id}-${optIndex}`}
-                                  checked={!!opt.isCorrect}
-                                  onCheckedChange={(checked) => updateOption(q.id, optIndex, 'isCorrect', checked)}
-                                  className="data-[state=checked]:bg-emerald-500"
-                                />
+                          <div key={opt.letter} className={`p-4 border rounded-xl space-y-4 bg-white shadow-sm ${opt.isCorrect ? 'ring-2 ring-emerald-500 border-emerald-500' : ''} ${opt.isActive === false ? 'opacity-50 grayscale' : ''}`}>
+                            <div className="flex justify-between items-start border-b pb-2">
+                              <Label className="font-black text-xl text-slate-800 mt-1">Option {opt.letter}</Label>
+                              <div className="flex flex-col items-end gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Label htmlFor={`active-${q.id}-${optIndex}`} className="text-xs font-bold text-slate-500 cursor-pointer">Show</Label>
+                                  <Switch 
+                                    id={`active-${q.id}-${optIndex}`}
+                                    checked={opt.isActive !== false}
+                                    onCheckedChange={(checked) => updateOption(q.id, optIndex, 'isActive', checked)}
+                                    className="data-[state=checked]:bg-blue-500"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label htmlFor={`correct-${q.id}-${optIndex}`} className="text-xs font-bold text-slate-500 cursor-pointer">Correct</Label>
+                                  <Switch 
+                                    id={`correct-${q.id}-${optIndex}`}
+                                    checked={!!opt.isCorrect}
+                                    onCheckedChange={(checked) => updateOption(q.id, optIndex, 'isCorrect', checked)}
+                                    className="data-[state=checked]:bg-emerald-500"
+                                  />
+                                </div>
                               </div>
                             </div>
                             <div className="space-y-2">
