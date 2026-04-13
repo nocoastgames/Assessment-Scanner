@@ -387,22 +387,8 @@ export default function App() {
     }, 2000);
   };
 
-  const advanceToNextQuestion = (isNoResponse: boolean = false) => {
+  const advanceToNextQuestion = () => {
     setIsWaitingForTeacher(false);
-    if (isNoResponse) {
-      setResponses((prev) => [
-        ...prev,
-        {
-          questionNumber: currentQuestion,
-          option: 'NR',
-          optionText: 'No Response',
-          timestamp: new Date().toLocaleTimeString(),
-          attempt: currentAttempt,
-          isCorrect: false
-        }
-      ]);
-      toast.info(`Question ${currentQuestion}: Logged as No Response`);
-    }
 
     if (currentQuestion < actualNumQuestions) {
       const nextQ = currentQuestion + 1;
@@ -423,17 +409,44 @@ export default function App() {
     }
   };
 
+  const handleNoResponse = async () => {
+    setIsScanning(false);
+    setResponses((prev) => [
+      ...prev,
+      {
+        questionNumber: currentQuestion,
+        option: 'NR',
+        optionText: 'No Response',
+        timestamp: new Date().toLocaleTimeString(),
+        attempt: currentAttempt,
+        isCorrect: false
+      }
+    ]);
+    toast.info(`Question ${currentQuestion}: Logged as No Response`);
+    
+    await Promise.all([
+      speak('No response'),
+      new Promise(resolve => setTimeout(resolve, 1500))
+    ]);
+
+    if (isManualAdvanceActive) {
+      setIsWaitingForTeacher(true);
+    } else {
+      advanceToNextQuestion();
+    }
+  };
+
   // --- No Response Timeout Logic ---
-  const advanceToNextQuestionRef = useRef(advanceToNextQuestion);
+  const handleNoResponseRef = useRef(handleNoResponse);
   useEffect(() => {
-    advanceToNextQuestionRef.current = advanceToNextQuestion;
+    handleNoResponseRef.current = handleNoResponse;
   });
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout;
     if (noResponseTimeout > 0 && appState === 'testing' && isScanning && !isWaitingForTeacher) {
       timeoutId = setTimeout(() => {
-        advanceToNextQuestionRef.current(true);
+        handleNoResponseRef.current();
       }, noResponseTimeout * 1000);
     }
     return () => {
@@ -476,7 +489,7 @@ export default function App() {
             new Promise(resolve => setTimeout(resolve, 1500))
           ]);
           if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-          else advanceToNextQuestion(false);
+          else advanceToNextQuestion();
         } else {
           setResponses((prev) => [...prev, newResponse]);
           setEliminatedOptions((prev) => [...prev, originalIndex]);
@@ -503,7 +516,7 @@ export default function App() {
           new Promise(resolve => setTimeout(resolve, 1500))
         ]);
         if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-        else advanceToNextQuestion(false);
+        else advanceToNextQuestion();
       }
     } else {
       setResponses((prev) => [...prev, newResponse]);
@@ -514,12 +527,8 @@ export default function App() {
         new Promise(resolve => setTimeout(resolve, 1500))
       ]);
       if (isManualAdvanceActive) setIsWaitingForTeacher(true);
-      else advanceToNextQuestion(false);
+      else advanceToNextQuestion();
     }
-  };
-
-  const handleNoResponse = () => {
-    advanceToNextQuestion(true);
   };
 
   const handleFinishTest = () => {
@@ -1150,7 +1159,7 @@ export default function App() {
             <Button 
               onClick={() => {
                 setIsWaitingForTeacher(false);
-                advanceToNextQuestion(false);
+                advanceToNextQuestion();
               }}
               className={`h-32 text-4xl font-black uppercase tracking-tighter shadow-xl ${
                 isCVIMode 
