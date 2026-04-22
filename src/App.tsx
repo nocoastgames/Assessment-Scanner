@@ -41,7 +41,7 @@ type Response = {
   isCorrect?: boolean;
 };
 
-type AppState = 'setup' | 'splash' | 'testing' | 'results';
+type AppState = 'setup' | 'splash' | 'testing' | 'results' | 'wrong-prompt';
 
 type TestOption = {
   letter: string;
@@ -76,11 +76,12 @@ export default function App() {
   const [ttsVoice, setTtsVoice] = useState<'female' | 'male'>('female');
   const [ttsCycleLimit, setTtsCycleLimit] = useState(0); // 0 = infinite
   const [isAnnounceQuestionActive, setIsAnnounceQuestionActive] = useState(true);
+  const [isReadQuestionTextActive, setIsReadQuestionTextActive] = useState(false);
   const [isManualAdvanceActive, setIsManualAdvanceActive] = useState(false);
   const [isTwoAttemptsMode, setIsTwoAttemptsMode] = useState(false);
   const [isCVIMode, setIsCVIMode] = useState(false);
   const [timeLimit, setTimeLimit] = useState(0); // 0 means no limit (minutes)
-  const [noResponseTimeout, setNoResponseTimeout] = useState(0); // 0 means infinite (seconds)
+  const [noResponseCycles, setNoResponseCycles] = useState(0); // 0 means infinite (cycles)
   
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
   
@@ -195,6 +196,13 @@ export default function App() {
           const nextIndex = (prev + 1) % activeOptions.length;
           if (nextIndex === 0) {
             cycleCountRef.current += 1;
+            
+            if (noResponseCycles > 0 && cycleCountRef.current >= noResponseCycles) {
+              setTimeout(() => {
+                handleNoResponseRef.current();
+              }, 0);
+              return prev; // stop advancing visually and wait for NO response to handle state
+            }
           }
           return nextIndex;
         });
@@ -207,7 +215,7 @@ export default function App() {
       isCancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [currentIndex, isScanning, appState, activeOptions, scanSpeed, testMode, questions, currentQuestion, speak]);
+  }, [currentIndex, isScanning, appState, activeOptions, scanSpeed, testMode, questions, currentQuestion, speak, noResponseCycles]);
 
   // --- Switch Accessibility (Keyboard) ---
   useEffect(() => {
@@ -304,11 +312,12 @@ export default function App() {
       ttsVoice,
       ttsCycleLimit,
       isAnnounceQuestionActive,
+      isReadQuestionTextActive,
       isManualAdvanceActive,
       isCVIMode,
       scanSpeed,
       timeLimit,
-      noResponseTimeout
+      noResponseCycles
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -342,11 +351,16 @@ export default function App() {
           if (data.ttsVoice !== undefined) setTtsVoice(data.ttsVoice);
           if (data.ttsCycleLimit !== undefined) setTtsCycleLimit(data.ttsCycleLimit);
           if (data.isAnnounceQuestionActive !== undefined) setIsAnnounceQuestionActive(data.isAnnounceQuestionActive);
+          if (data.isReadQuestionTextActive !== undefined) setIsReadQuestionTextActive(data.isReadQuestionTextActive);
           if (data.isManualAdvanceActive !== undefined) setIsManualAdvanceActive(data.isManualAdvanceActive);
           if (data.isCVIMode !== undefined) setIsCVIMode(data.isCVIMode);
           if (data.scanSpeed !== undefined) setScanSpeed(data.scanSpeed);
           if (data.timeLimit !== undefined) setTimeLimit(data.timeLimit);
-          if (data.noResponseTimeout !== undefined) setNoResponseTimeout(data.noResponseTimeout);
+          if (data.noResponseCycles !== undefined) {
+            setNoResponseCycles(data.noResponseCycles);
+          } else if (data.noResponseTimeout !== undefined) {
+             setNoResponseCycles(0); // Reset for old exports as format changed
+          }
           
           setTestMode('custom');
           toast.success('Question bank imported successfully');
@@ -362,6 +376,33 @@ export default function App() {
   };
 
   // --- Test Handlers ---
+  const startQuestionSequence = async (qNum: number) => {
+    setIsScanning(false);
+    setAppState('splash');
+    
+    let speechText = '';
+    if (isAnnounceQuestionActive) {
+      speechText += `Question ${qNum}. `;
+    }
+    
+    if (isReadQuestionTextActive && testMode === 'custom') {
+      const qText = questions[qNum - 1]?.questionText;
+      if (qText) {
+         speechText += qText;
+      }
+    }
+
+    if (speechText) {
+      await speak(speechText);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+
+    setAppState('testing');
+    setIsScanning(true);
+  };
+
   const handleStartTest = () => {
     if (!studentId.trim()) {
       toast.error('Please enter a student identifier');
@@ -377,14 +418,8 @@ export default function App() {
     setEliminatedOptions([]);
     setCurrentIndex(0);
     cycleCountRef.current = 0;
-    setIsScanning(false);
     setIsWaitingForTeacher(false);
-    setAppState('splash');
-    if (isAnnounceQuestionActive) speak(`Question ${startQuestion}`);
-    setTimeout(() => {
-      setAppState('testing');
-      setIsScanning(true);
-    }, 2000);
+    startQuestionSequence(startQuestion);
   };
 
   const advanceToNextQuestion = () => {
@@ -397,13 +432,7 @@ export default function App() {
       setEliminatedOptions([]);
       setCurrentIndex(0);
       cycleCountRef.current = 0;
-      setIsScanning(false);
-      setAppState('splash');
-      if (isAnnounceQuestionActive) speak(`Question ${nextQ}`);
-      setTimeout(() => {
-        setAppState('testing');
-        setIsScanning(true);
-      }, 2000);
+      startQuestionSequence(nextQ);
     } else {
       handleFinishTest();
     }
@@ -436,23 +465,11 @@ export default function App() {
     }
   };
 
-  // --- No Response Timeout Logic ---
+  // --- No Response Ref for Async calls ---
   const handleNoResponseRef = useRef(handleNoResponse);
   useEffect(() => {
     handleNoResponseRef.current = handleNoResponse;
   });
-
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    if (noResponseTimeout > 0 && appState === 'testing' && isScanning && !isWaitingForTeacher) {
-      timeoutId = setTimeout(() => {
-        handleNoResponseRef.current();
-      }, noResponseTimeout * 1000);
-    }
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [noResponseTimeout, appState, isScanning, isWaitingForTeacher, currentQuestion, currentAttempt]);
 
   const handleSelect = async () => {
     const now = Date.now();
@@ -497,6 +514,7 @@ export default function App() {
           setCurrentIndex(0);
           cycleCountRef.current = 0;
           setIsScanning(false);
+          setAppState('wrong-prompt');
           
           const promptToRead = currentQ?.alternatePrompt || currentQ?.questionText || 'Try again';
           toast.error(`Question ${currentQuestion}: Selected ${selectedOption} (Incorrect). Try again.`);
@@ -505,6 +523,7 @@ export default function App() {
             new Promise(resolve => setTimeout(resolve, 3000))
           ]);
           
+          setAppState('testing');
           if (!isManualAdvanceActive) setIsScanning(true);
         }
       } else {
@@ -732,17 +751,6 @@ export default function App() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="noResponseTimeout">No Response Timeout (Seconds, 0 = None)</Label>
-                  <Input 
-                    id="noResponseTimeout" 
-                    type="number" 
-                    value={noResponseTimeout} 
-                    onChange={(e) => setNoResponseTimeout(parseInt(e.target.value) || 0)}
-                    min="0"
-                    className="border-slate-200 focus:ring-slate-500"
-                  />
-                </div>
-                <div className="space-y-2">
                   <Label htmlFor="startQuestion">Start at Question</Label>
                   <Input 
                     id="startQuestion" 
@@ -821,6 +829,36 @@ export default function App() {
 
                 <div className="flex justify-between items-center">
                   <div className="space-y-0.5">
+                    <Label className="text-base">Read Question Text</Label>
+                    <p className="text-sm text-slate-500">Read the full question text on the splash screen.</p>
+                  </div>
+                  <Switch 
+                    checked={isReadQuestionTextActive} 
+                    onCheckedChange={setIsReadQuestionTextActive} 
+                    className="data-[state=checked]:bg-slate-900"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="space-y-0.5 w-[65%]">
+                    <Label className="text-base">No Response Timeout (Cycles)</Label>
+                    <p className="text-sm text-slate-500">Wait how many scanning cycles before skipping? (0 = wait forever)</p>
+                  </div>
+                  <div className="w-[30%] flex items-center gap-4">
+                    <Slider 
+                      value={[noResponseCycles]} 
+                      onValueChange={(val) => setNoResponseCycles(Array.isArray(val) ? val[0] : val)} 
+                      min={0} 
+                      max={10} 
+                      step={1}
+                      className="flex-1"
+                    />
+                    <span className="font-bold text-lg min-w-[2rem] text-center">{noResponseCycles === 0 ? '∞' : noResponseCycles}</span>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <div className="space-y-0.5">
                     <Label className="text-base">Teacher Manual Advance</Label>
                     <p className="text-sm text-slate-500">Wait for teacher to advance to the next question after a response.</p>
                   </div>
@@ -833,8 +871,8 @@ export default function App() {
 
                 <div className="flex justify-between items-center">
                   <div className="space-y-0.5">
-                    <Label className="text-base">Two Attempts Mode (Custom Only)</Label>
-                    <p className="text-sm text-slate-500">Give two attempts for custom questions. Eliminates wrong answer.</p>
+                    <Label className="text-base">Two Attempts Mode (Option Elimination)</Label>
+                    <p className="text-sm text-slate-500">Give two attempts. In Generic mode, requires teacher to grade the first attempt.</p>
                   </div>
                   <Switch 
                     checked={isTwoAttemptsMode} 
@@ -1260,18 +1298,62 @@ export default function App() {
     );
   };
 
-  const renderSplash = () => (
-    <motion.div 
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 1.1 }}
-      className="flex flex-col items-center justify-center min-h-[60vh]"
-    >
-      <h2 className={`text-6xl md:text-8xl font-black tracking-tighter ${isCVIMode ? 'text-yellow-400' : 'text-[#2B3990]'}`}>
-        Question {currentQuestion}
-      </h2>
-    </motion.div>
-  );
+  const renderSplash = () => {
+    const currentQData = testMode === 'custom' ? questions[currentQuestion - 1] : null;
+
+    return (
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 1.1 }}
+        className="flex flex-col items-center justify-center min-h-[60vh] px-4 text-center space-y-8"
+      >
+        <h2 className={`text-6xl md:text-8xl font-black tracking-tighter ${isCVIMode ? 'text-yellow-400' : 'text-[#2B3990]'}`}>
+          Question {currentQuestion}
+        </h2>
+
+        {isReadQuestionTextActive && testMode === 'custom' && currentQData?.questionText && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+          >
+            <h3 className={`text-4xl md:text-6xl font-bold max-w-4xl leading-tight ${isCVIMode ? 'text-yellow-400' : 'text-slate-800'}`}>
+              {currentQData.questionText}
+            </h3>
+          </motion.div>
+        )}
+      </motion.div>
+    );
+  };
+
+  const renderWrongPrompt = () => {
+    const currentQData = testMode === 'custom' ? questions[currentQuestion - 1] : null;
+    const promptText = currentQData?.alternatePrompt || currentQData?.questionText || 'Try again';
+
+    return (
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 1.1 }}
+        className="flex flex-col items-center justify-center min-h-[60vh] px-4 text-center space-y-8"
+      >
+        <h2 className={`text-6xl md:text-8xl font-black tracking-tighter ${isCVIMode ? 'text-red-500' : 'text-red-500'}`}>
+          Oops!
+        </h2>
+        
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
+          <h3 className={`text-5xl md:text-7xl font-bold max-w-4xl leading-tight ${isCVIMode ? 'text-yellow-400' : 'text-slate-800'}`}>
+            {promptText}
+          </h3>
+        </motion.div>
+      </motion.div>
+    );
+  };
 
   const renderResults = () => (
     <motion.div 
@@ -1372,6 +1454,7 @@ export default function App() {
         <AnimatePresence mode="wait">
           {appState === 'setup' && renderSetup()}
           {appState === 'splash' && renderSplash()}
+          {appState === 'wrong-prompt' && renderWrongPrompt()}
           {appState === 'testing' && renderTesting()}
           {appState === 'results' && renderResults()}
         </AnimatePresence>
