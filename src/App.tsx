@@ -38,8 +38,8 @@ import { toast } from 'sonner';
 
 import { Response, AppState, AssessmentType, TestOption, TestQuestion } from './types';
 import { BatchImageUploader } from './components/BatchImageUploader';
-import { AssessmentImporter } from './components/AssessmentImporter';
 import { ShareAssessmentModal } from './components/ShareAssessmentModal';
+import { ULSAssessmentManagerModal } from './components/ULSAssessmentManagerModal';
 
 // --- Constants ---
 const CLICK_SAFEGUARD_MS = 1000; // 1 second lockout between clicks
@@ -69,8 +69,8 @@ export default function App() {
   
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
   const [isBatchImageModalOpen, setIsBatchImageModalOpen] = useState(false);
-  const [isAssessmentImportModalOpen, setIsAssessmentImportModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isULSManagerOpen, setIsULSManagerOpen] = useState(false);
 
   // Auto-load assessment if URL contains #assessment=...
   useEffect(() => {
@@ -162,18 +162,40 @@ export default function App() {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.rate = 0.8; // Slightly slower for clarity
+      utterance.lang = 'en-US'; // Enforce US English accent
       
       const voices = window.speechSynthesis.getVoices();
       if (voices.length > 0) {
-        let selectedVoice = voices.find(v => 
-          ttsVoice === 'female' 
-            ? (v.name.toLowerCase().includes('female') || v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('victoria'))
-            : (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('alex') || v.name.toLowerCase().includes('daniel'))
+        // Prioritize US English voices (en-US)
+        const usVoices = voices.filter(v => 
+          v.lang === 'en-US' || 
+          v.lang === 'en_US' || 
+          v.lang.toLowerCase().includes('en-us') || 
+          v.lang.toLowerCase().includes('en_us')
         );
-        
-        if (!selectedVoice) {
-           selectedVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
+        const candidatePool = usVoices.length > 0 ? usVoices : voices.filter(v => v.lang.startsWith('en'));
+
+        let selectedVoice: SpeechSynthesisVoice | undefined;
+
+        if (ttsVoice === 'female') {
+          selectedVoice = candidatePool.find(v => {
+            const name = v.name.toLowerCase();
+            return name.includes('samantha') || name.includes('victoria') || name.includes('ava') || 
+                   name.includes('allison') || name.includes('zira') || name.includes('female') ||
+                   name.includes('karen') || name.includes('susan');
+          });
+        } else {
+          selectedVoice = candidatePool.find(v => {
+            const name = v.name.toLowerCase();
+            return name.includes('alex') || name.includes('david') || name.includes('fred') || 
+                   name.includes('tom') || name.includes('male') || name.includes('guy');
+          });
         }
+
+        if (!selectedVoice) {
+          selectedVoice = candidatePool.find(v => v.name.toLowerCase().includes('google us english')) || candidatePool[0];
+        }
+
         if (selectedVoice) {
           utterance.voice = selectedVoice;
         }
@@ -984,15 +1006,15 @@ export default function App() {
                       {assessmentType}
                     </span>
                   </div>
-                  <p className="text-sm text-slate-500">Create questions, import pre/post-tests, or batch upload option images (1.1, 1.2, 1.3...)</p>
+                  <p className="text-sm text-slate-500">Create questions or batch upload option images (1.1, 1.2, 1.3...)</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
                   <Button 
                     type="button"
-                    onClick={() => setIsAssessmentImportModalOpen(true)}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm"
+                    onClick={() => setIsULSManagerOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-xs"
                   >
-                    <BookOpen className="w-4 h-4 mr-2" /> Import Pre/Post Test
+                    <BookOpen className="w-4 h-4 mr-1.5" /> ULS Pre/Post Test Library
                   </Button>
                   <Button 
                     type="button"
@@ -1019,7 +1041,6 @@ export default function App() {
                     type="button" 
                     onClick={() => setIsShareModalOpen(true)} 
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-sm"
-                    disabled={questions.length === 0}
                   >
                     <Share2 className="w-4 h-4 mr-2" /> Share / Host Test
                   </Button>
@@ -1523,11 +1544,29 @@ export default function App() {
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xl ${isCVIMode ? 'bg-yellow-400 text-black' : 'bg-slate-900 text-white'}`}>M</div>
           <h1 className="text-xl font-black tracking-tighter uppercase">Miller <span className={isCVIMode ? 'text-yellow-400/50' : 'text-slate-400'}>Scanner</span></h1>
         </div>
-        {appState !== 'setup' && (
-          <Button variant="ghost" size="sm" onClick={handleReset} className="text-slate-500 hover:text-slate-900">
-            <RotateCcw className="w-4 h-4 mr-2" /> Reset
+        <div className="flex items-center gap-2">
+          <Button 
+            type="button" 
+            onClick={() => setIsULSManagerOpen(true)} 
+            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs sm:text-sm h-9 px-3 rounded-xl shadow-xs"
+          >
+            <BookOpen className="w-4 h-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">ULS Library & History</span>
           </Button>
-        )}
+          <Button 
+            type="button" 
+            onClick={() => setIsShareModalOpen(true)} 
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs sm:text-sm h-9 px-3 rounded-xl shadow-sm"
+          >
+            <Share2 className="w-4 h-4 sm:mr-1.5" />
+            <span className="hidden sm:inline">Share / Host Test</span>
+          </Button>
+          {appState !== 'setup' && (
+            <Button variant="ghost" size="sm" onClick={handleReset} className="text-slate-500 hover:text-slate-900">
+              <RotateCcw className="w-4 h-4 mr-2" /> Reset
+            </Button>
+          )}
+        </div>
       </header>
 
       <main className="pb-20">
@@ -1549,25 +1588,25 @@ export default function App() {
         onApplyImages={(updated) => setQuestions(updated)}
       />
 
-      <AssessmentImporter 
-        isOpen={isAssessmentImportModalOpen}
-        onClose={() => setIsAssessmentImportModalOpen(false)}
-        onImportAssessment={(data) => {
-          setQuestions(data.questions);
-          setTestName(data.testName);
-          setAssessmentType(data.assessmentType);
-          setTestMode('custom');
-          if (data.enableTwoAttempts) setIsTwoAttemptsMode(true);
-          if (data.enableReadQuestionText) setIsReadQuestionTextActive(true);
-        }}
-      />
-
       <ShareAssessmentModal 
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
         testName={testName}
         assessmentType={assessmentType}
         questions={questions}
+      />
+
+      <ULSAssessmentManagerModal 
+        isOpen={isULSManagerOpen}
+        onClose={() => setIsULSManagerOpen(false)}
+        onLoadAssessment={(data) => {
+          setQuestions(data.questions);
+          setTestName(data.testName);
+          setAssessmentType(data.assessmentType);
+          setTestMode('custom');
+          setIsTwoAttemptsMode(true);
+          setIsReadQuestionTextActive(true);
+        }}
       />
     </div>
   );

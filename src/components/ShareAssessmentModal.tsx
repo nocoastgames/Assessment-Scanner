@@ -27,11 +27,14 @@ export function ShareAssessmentModal({
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedEmbed, setCopiedEmbed] = useState(false);
 
+  const activeQuestions = questions && questions.length > 0 ? questions : [];
+  const activeName = testName || (questions && questions.length > 0 ? 'Shared Assessment' : 'Unit 1 Pre-Test');
+
   // Generate share payload
   const payload = {
-    testName: testName || 'Shared Assessment',
+    testName: activeName,
     assessmentType: assessmentType || 'pre-test',
-    questions: questions
+    questions: activeQuestions
   };
 
   const jsonString = JSON.stringify(payload);
@@ -146,6 +149,15 @@ export function ShareAssessmentModal({
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
         u.rate = 0.9;
+        u.lang = 'en-US';
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length > 0) {
+          const usVoices = voices.filter(v => v.lang === 'en-US' || v.lang === 'en_US' || v.lang.toLowerCase().includes('en-us'));
+          const pool = usVoices.length > 0 ? usVoices : voices.filter(v => v.lang.startsWith('en'));
+          if (pool.length > 0) {
+            u.voice = pool.find(v => v.name.toLowerCase().includes('samantha') || v.name.toLowerCase().includes('alex') || v.name.toLowerCase().includes('google us english')) || pool[0];
+          }
+        }
         window.speechSynthesis.speak(u);
       }
     }
@@ -308,7 +320,7 @@ export function ShareAssessmentModal({
             Share Assessment & Deploy to GitHub
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm text-slate-500">
-            Share "{testName || 'Assessment'}" ({questions.length} questions) via web link or export a standalone HTML page to host on GitHub Pages.
+            Share "{activeName}" ({activeQuestions.length} questions) via web link or export a standalone HTML page to host on GitHub Pages.
           </DialogDescription>
         </DialogHeader>
 
@@ -330,7 +342,7 @@ export function ShareAssessmentModal({
                   <Sparkles className="w-4 h-4 text-indigo-600" /> Instant Browser Link
                 </div>
                 <p className="text-xs text-indigo-800/80 leading-relaxed">
-                  Anyone who clicks this link will instantly load this exact assessment ({questions.length} items with options and image cards) into their app!
+                  Anyone who clicks this link will instantly load this exact assessment ({activeQuestions.length} items with options and image cards) into their app!
                 </p>
 
                 <div className="flex gap-2 pt-1">

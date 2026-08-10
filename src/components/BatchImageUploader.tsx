@@ -6,7 +6,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { TestQuestion, TestOption } from '../types';
-import { extractPDFContent } from '../lib/pdfExtractor';
 import { toast } from 'sonner';
 
 interface ParsedImageFile {
@@ -82,31 +81,7 @@ export function BatchImageUploader({
     const newParsed: ParsedImageFile[] = [];
 
     for (const file of files) {
-      if (file.name.toLowerCase().endsWith('.pdf')) {
-        try {
-          const pdfResult = await extractPDFContent(file);
-          if (pdfResult.extractedImages.length > 0) {
-            pdfResult.extractedImages.forEach((img, idx) => {
-              const qNum = img.itemNumber || null;
-              const opt = img.optionLetter || null;
-              newParsed.push({
-                id: `pdf-img-${Date.now()}-${idx}`,
-                file,
-                dataUrl: img.dataUrl,
-                fileName: `${file.name} (Q${qNum || '?'}_${opt || '?'})`,
-                questionNum: qNum,
-                optionLetter: opt,
-                isMatched: qNum !== null && opt !== null
-              });
-            });
-            toast.success(`Extracted ${pdfResult.extractedImages.length} option image cards from PDF!`);
-          } else {
-            toast.info('No visual item choice cards detected in PDF.');
-          }
-        } catch (err) {
-          console.error('PDF extraction failed:', err);
-          toast.error(`Failed to process PDF: ${file.name}`);
-        }
+      if (!file.type.startsWith('image/')) {
         continue;
       }
 
