@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Upload, ImagePlus, Check, AlertCircle, Trash2, X, Sparkles, HelpCircle } from 'lucide-react';
+import { Upload, ImagePlus, Check, AlertCircle, Trash2, X, Sparkles, HelpCircle, FileUp, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { TestQuestion, TestOption } from '../types';
+import { extractPDFContent } from '../lib/pdfExtractor';
 import { toast } from 'sonner';
 
 interface ParsedImageFile {
@@ -81,6 +82,34 @@ export function BatchImageUploader({
     const newParsed: ParsedImageFile[] = [];
 
     for (const file of files) {
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        try {
+          const pdfResult = await extractPDFContent(file);
+          if (pdfResult.extractedImages.length > 0) {
+            pdfResult.extractedImages.forEach((img, idx) => {
+              const qNum = img.itemNumber || null;
+              const opt = img.optionLetter || null;
+              newParsed.push({
+                id: `pdf-img-${Date.now()}-${idx}`,
+                file,
+                dataUrl: img.dataUrl,
+                fileName: `${file.name} (Q${qNum || '?'}_${opt || '?'})`,
+                questionNum: qNum,
+                optionLetter: opt,
+                isMatched: qNum !== null && opt !== null
+              });
+            });
+            toast.success(`Extracted ${pdfResult.extractedImages.length} option image cards from PDF!`);
+          } else {
+            toast.info('No visual item choice cards detected in PDF.');
+          }
+        } catch (err) {
+          console.error('PDF extraction failed:', err);
+          toast.error(`Failed to process PDF: ${file.name}`);
+        }
+        continue;
+      }
+
       const dataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
@@ -180,15 +209,15 @@ export function BatchImageUploader({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-6 overflow-hidden bg-white rounded-2xl shadow-2xl border-0">
-        <DialogHeader className="pb-4 border-b">
+      <DialogContent className="sm:max-w-3xl md:max-w-4xl w-[95vw] max-h-[90vh] flex flex-col p-4 sm:p-6 overflow-hidden bg-white rounded-2xl shadow-2xl border-0">
+        <DialogHeader className="pb-3 border-b shrink-0">
           <div className="flex items-center gap-2 text-indigo-600 font-bold text-xs uppercase tracking-wider mb-1">
             <Sparkles className="w-4 h-4" /> Batch Asset Importer
           </div>
-          <DialogTitle className="text-2xl font-black text-slate-900">
+          <DialogTitle className="text-xl sm:text-2xl font-black text-slate-900 leading-tight">
             Batch Upload Option Images
           </DialogTitle>
-          <DialogDescription className="text-slate-500">
+          <DialogDescription className="text-xs sm:text-sm text-slate-500">
             Select multiple image files at once. Files named like <code className="bg-slate-100 text-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-xs">1.1</code>, <code className="bg-slate-100 text-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-xs">1.2</code>, <code className="bg-slate-100 text-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-xs">1.3</code>, <code className="bg-slate-100 text-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-xs">2.1</code>, <code className="bg-slate-100 text-slate-900 px-1.5 py-0.5 rounded font-mono font-bold text-xs">2.2</code> will automatically map to Question # and Option A/B/C!
           </DialogDescription>
         </DialogHeader>
@@ -198,7 +227,7 @@ export function BatchImageUploader({
           <div className="border-2 border-dashed border-indigo-200 bg-indigo-50/50 hover:bg-indigo-50 rounded-2xl p-8 text-center transition-colors">
             <input 
               type="file" 
-              accept="image/*" 
+              accept="image/*,.pdf,application/pdf" 
               multiple 
               id="batch-image-file-input" 
               className="hidden" 
