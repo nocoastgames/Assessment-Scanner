@@ -18,7 +18,10 @@ import {
   Plus,
   X,
   Download,
-  Upload
+  Upload,
+  BookOpen,
+  Sparkles,
+  Layers
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -31,32 +34,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Toaster } from '@/components/ui/sonner';
 import { toast } from 'sonner';
 
-// --- Types ---
-type Response = {
-  questionNumber: number;
-  option: string;
-  optionText?: string;
-  timestamp: string;
-  attempt?: number;
-  isCorrect?: boolean;
-};
-
-type AppState = 'setup' | 'splash' | 'testing' | 'results' | 'wrong-prompt';
-
-type TestOption = {
-  letter: string;
-  text: string;
-  image: string | null;
-  isCorrect?: boolean;
-  isActive?: boolean;
-};
-
-type TestQuestion = {
-  id: string;
-  questionText: string;
-  alternatePrompt?: string;
-  options: TestOption[];
-};
+import { Response, AppState, AssessmentType, TestOption, TestQuestion } from './types';
+import { BatchImageUploader } from './components/BatchImageUploader';
+import { AssessmentImporter } from './components/AssessmentImporter';
 
 // --- Constants ---
 const CLICK_SAFEGUARD_MS = 1000; // 1 second lockout between clicks
@@ -66,6 +46,7 @@ export default function App() {
   const [appState, setAppState] = useState<AppState>('setup');
   const [testMode, setTestMode] = useState<'generic' | 'custom'>('generic');
   const [testName, setTestName] = useState('');
+  const [assessmentType, setAssessmentType] = useState<AssessmentType>('pre-test');
   const [numQuestions, setNumQuestions] = useState(10);
   const [startQuestion, setStartQuestion] = useState(1);
   const [genericType, setGenericType] = useState<'yes/no' | '1,2,3' | 'a,b,c'>('a,b,c');
@@ -84,6 +65,8 @@ export default function App() {
   const [noResponseCycles, setNoResponseCycles] = useState(0); // 0 means infinite (cycles)
   
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
+  const [isBatchImageModalOpen, setIsBatchImageModalOpen] = useState(false);
+  const [isAssessmentImportModalOpen, setIsAssessmentImportModalOpen] = useState(false);
   
   const [currentQuestion, setCurrentQuestion] = useState(1);
   const [currentAttempt, setCurrentAttempt] = useState(1);
@@ -306,6 +289,7 @@ export default function App() {
   const exportQuestionBank = () => {
     const data = {
       testName,
+      assessmentType,
       questions,
       isTwoAttemptsMode,
       isTTSActive,
@@ -346,6 +330,7 @@ export default function App() {
         if (data.questions && Array.isArray(data.questions)) {
           setQuestions(data.questions);
           if (data.testName !== undefined) setTestName(data.testName);
+          if (data.assessmentType !== undefined) setAssessmentType(data.assessmentType);
           if (data.isTwoAttemptsMode !== undefined) setIsTwoAttemptsMode(data.isTwoAttemptsMode);
           if (data.isTTSActive !== undefined) setIsTTSActive(data.isTTSActive);
           if (data.ttsVoice !== undefined) setTtsVoice(data.ttsVoice);
@@ -565,10 +550,11 @@ export default function App() {
   };
 
   const exportToCSV = () => {
-    const headers = ['Student ID', 'Test Name', 'Date', 'Question Number', 'Attempt', 'Option Selected', 'Option Text', 'Correct', 'Timestamp'];
+    const headers = ['Student ID', 'Test Name', 'Assessment Type', 'Date', 'Question Number', 'Attempt', 'Option Selected', 'Option Text', 'Correct', 'Timestamp'];
     const rows = responses.map(r => [
       studentId,
       testName,
+      assessmentType,
       new Date().toLocaleDateString(),
       r.questionNumber,
       r.attempt || 1,
@@ -647,6 +633,35 @@ export default function App() {
                     onChange={(e) => setStudentId(e.target.value)}
                     className="border-slate-200 focus:ring-slate-500"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>Assessment Tag / Type</Label>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      type="button"
+                      variant={assessmentType === 'pre-test' ? 'default' : 'outline'} 
+                      onClick={() => setAssessmentType('pre-test')}
+                      className={assessmentType === 'pre-test' ? 'bg-emerald-600 text-white font-bold' : ''}
+                    >
+                      Pre-Test
+                    </Button>
+                    <Button 
+                      type="button"
+                      variant={assessmentType === 'post-test' ? 'default' : 'outline'} 
+                      onClick={() => setAssessmentType('post-test')}
+                      className={assessmentType === 'post-test' ? 'bg-blue-600 text-white font-bold' : ''}
+                    >
+                      Post-Test
+                    </Button>
+                    <Button 
+                      type="button"
+                      variant={assessmentType === 'standard' ? 'default' : 'outline'} 
+                      onClick={() => setAssessmentType('standard')}
+                      className={assessmentType === 'standard' ? 'bg-slate-900 text-white font-bold' : ''}
+                    >
+                      Standard
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Test Mode</Label>
@@ -924,14 +939,37 @@ export default function App() {
             </TabsContent>
 
             <TabsContent value="questions" className="space-y-6">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div className="space-y-1">
-                  <h3 className="font-bold text-slate-900">Custom Question Bank</h3>
-                  <p className="text-sm text-slate-500">Create, export, or import your custom questions and settings.</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-slate-900 text-lg">Custom Question Bank</h3>
+                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                      assessmentType === 'pre-test' ? 'bg-emerald-100 text-emerald-800' :
+                      assessmentType === 'post-test' ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {assessmentType}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-500">Create questions, import pre/post-tests, or batch upload option images (1.1, 1.2, 1.3...)</p>
                 </div>
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <Button variant="outline" onClick={handleImportClick} className="flex-1 sm:flex-none bg-white">
-                    <Upload className="w-4 h-4 mr-2" /> Import
+                <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                  <Button 
+                    type="button"
+                    onClick={() => setIsAssessmentImportModalOpen(true)}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-sm"
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" /> Import Pre/Post Test
+                  </Button>
+                  <Button 
+                    type="button"
+                    onClick={() => setIsBatchImageModalOpen(true)}
+                    variant="outline"
+                    className="bg-white border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold"
+                  >
+                    <ImagePlus className="w-4 h-4 mr-2" /> Batch Upload Images
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleImportClick} className="bg-white">
+                    <Upload className="w-4 h-4 mr-2" /> Import JSON
                   </Button>
                   <input 
                     type="file" 
@@ -940,7 +978,7 @@ export default function App() {
                     ref={fileInputRef} 
                     onChange={handleImportFile} 
                   />
-                  <Button variant="outline" onClick={exportQuestionBank} className="flex-1 sm:flex-none bg-white" disabled={questions.length === 0}>
+                  <Button type="button" variant="outline" onClick={exportQuestionBank} className="bg-white" disabled={questions.length === 0}>
                     <Download className="w-4 h-4 mr-2" /> Export
                   </Button>
                 </div>
@@ -1461,6 +1499,26 @@ export default function App() {
       </main>
 
       <Toaster position="bottom-center" />
+
+      <BatchImageUploader 
+        isOpen={isBatchImageModalOpen}
+        onClose={() => setIsBatchImageModalOpen(false)}
+        existingQuestions={questions}
+        onApplyImages={(updated) => setQuestions(updated)}
+      />
+
+      <AssessmentImporter 
+        isOpen={isAssessmentImportModalOpen}
+        onClose={() => setIsAssessmentImportModalOpen(false)}
+        onImportAssessment={(data) => {
+          setQuestions(data.questions);
+          setTestName(data.testName);
+          setAssessmentType(data.assessmentType);
+          setTestMode('custom');
+          if (data.enableTwoAttempts) setIsTwoAttemptsMode(true);
+          if (data.enableReadQuestionText) setIsReadQuestionTextActive(true);
+        }}
+      />
     </div>
   );
 }
