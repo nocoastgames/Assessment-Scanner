@@ -21,7 +21,9 @@ import {
   Upload,
   BookOpen,
   Sparkles,
-  Layers
+  Layers,
+  Share2,
+  Globe
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -37,6 +39,7 @@ import { toast } from 'sonner';
 import { Response, AppState, AssessmentType, TestOption, TestQuestion } from './types';
 import { BatchImageUploader } from './components/BatchImageUploader';
 import { AssessmentImporter } from './components/AssessmentImporter';
+import { ShareAssessmentModal } from './components/ShareAssessmentModal';
 
 // --- Constants ---
 const CLICK_SAFEGUARD_MS = 1000; // 1 second lockout between clicks
@@ -67,6 +70,37 @@ export default function App() {
   const [questions, setQuestions] = useState<TestQuestion[]>([]);
   const [isBatchImageModalOpen, setIsBatchImageModalOpen] = useState(false);
   const [isAssessmentImportModalOpen, setIsAssessmentImportModalOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+
+  // Auto-load assessment if URL contains #assessment=...
+  useEffect(() => {
+    try {
+      const hash = window.location.hash;
+      if (hash && hash.includes('assessment=')) {
+        const encoded = hash.split('assessment=')[1];
+        if (encoded) {
+          const decodedJson = decodeURIComponent(
+            atob(encoded)
+              .split('')
+              .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+              .join('')
+          );
+          const data = JSON.parse(decodedJson);
+          if (data && data.questions && Array.isArray(data.questions)) {
+            setQuestions(data.questions);
+            if (data.testName) setTestName(data.testName);
+            if (data.assessmentType) setAssessmentType(data.assessmentType);
+            setTestMode('custom');
+            setIsTwoAttemptsMode(true);
+            setIsReadQuestionTextActive(true);
+            toast.success(`Loaded shared assessment: "${data.testName || 'Shared Assessment'}" (${data.questions.length} items)!`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse shared assessment from URL:', e);
+    }
+  }, []);
   
   const [currentQuestion, setCurrentQuestion] = useState(1);
   const [currentAttempt, setCurrentAttempt] = useState(1);
@@ -981,6 +1015,14 @@ export default function App() {
                   <Button type="button" variant="outline" onClick={exportQuestionBank} className="bg-white" disabled={questions.length === 0}>
                     <Download className="w-4 h-4 mr-2" /> Export
                   </Button>
+                  <Button 
+                    type="button" 
+                    onClick={() => setIsShareModalOpen(true)} 
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-sm"
+                    disabled={questions.length === 0}
+                  >
+                    <Share2 className="w-4 h-4 mr-2" /> Share / Host Test
+                  </Button>
                 </div>
               </div>
 
@@ -1518,6 +1560,14 @@ export default function App() {
           if (data.enableTwoAttempts) setIsTwoAttemptsMode(true);
           if (data.enableReadQuestionText) setIsReadQuestionTextActive(true);
         }}
+      />
+
+      <ShareAssessmentModal 
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        testName={testName}
+        assessmentType={assessmentType}
+        questions={questions}
       />
     </div>
   );
