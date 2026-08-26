@@ -373,7 +373,7 @@ export function ULSAssessmentManagerModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[92vh] flex flex-col p-0 overflow-hidden bg-white rounded-3xl border border-slate-200 shadow-2xl">
+      <DialogContent className="sm:max-w-5xl md:max-w-6xl lg:max-w-7xl w-[96vw] max-h-[92vh] flex flex-col p-0 overflow-hidden bg-white rounded-3xl border border-slate-200 shadow-2xl">
         <DialogHeader className="p-6 bg-slate-900 text-white shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">

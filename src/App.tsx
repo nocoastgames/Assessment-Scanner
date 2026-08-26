@@ -23,7 +23,9 @@ import {
   Sparkles,
   Layers,
   Share2,
-  Globe
+  Globe,
+  Lock,
+  Printer
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
@@ -40,9 +42,10 @@ import { Response, AppState, AssessmentType, TestOption, TestQuestion } from './
 import { BatchImageUploader } from './components/BatchImageUploader';
 import { ShareAssessmentModal } from './components/ShareAssessmentModal';
 import { ULSAssessmentManagerModal } from './components/ULSAssessmentManagerModal';
+import { generateAssessmentPDF } from './lib/pdfReportGenerator';
 
 // --- Constants ---
-const CLICK_SAFEGUARD_MS = 1000; // 1 second lockout between clicks
+const CLICK_SAFEGUARD_MS = 1500; // 1.5s baseline anti-spam debounce lockout
 
 export default function App() {
   // --- State ---
@@ -71,6 +74,11 @@ export default function App() {
   const [isBatchImageModalOpen, setIsBatchImageModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [isULSManagerOpen, setIsULSManagerOpen] = useState(false);
+
+  // Anti-Spam & Input Lockout States
+  const [pressDelayMs, setPressDelayMs] = useState(1500); // Anti-spam delay between presses (ms)
+  const [isInputLocked, setIsInputLocked] = useState(false);
+  const [isSpeakingPrompt, setIsSpeakingPrompt] = useState(false);
 
   // Auto-load assessment if URL contains #assessment=...
   useEffect(() => {
@@ -261,6 +269,14 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (appState !== 'testing') return;
       
+      if (isInputLocked || isSpeakingPrompt) {
+        // Block presses while question is being asked or during anti-spam lockout
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+        }
+        return;
+      }
+
       if (isWaitingForTeacher) {
         // Block space/enter when waiting for teacher to force manual click
         if (e.key === 'Enter' || e.key === ' ') {
@@ -277,7 +293,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [appState, currentIndex, isWaitingForTeacher]); // currentIndex needed for handleSelect closure if not using refs
+  }, [appState, currentIndex, isWaitingForTeacher, isInputLocked, isSpeakingPrompt, pressDelayMs]);
 
   // --- Timer Logic ---
   useEffect(() => {
@@ -419,6 +435,8 @@ export default function App() {
   // --- Test Handlers ---
   const startQuestionSequence = async (qNum: number) => {
     setIsScanning(false);
+    setIsInputLocked(true);
+    setIsSpeakingPrompt(true);
     setAppState('splash');
     
     let speechText = '';
@@ -435,13 +453,21 @@ export default function App() {
 
     if (speechText) {
       await speak(speechText);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Extra delay after speech to prevent spamming
+      await new Promise(resolve => setTimeout(resolve, 800));
     } else {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
 
+    setIsSpeakingPrompt(false);
     setAppState('testing');
-    setIsScanning(true);
+    
+    // Anti-spam buffer before enabling scanning and switch input
+    setTimeout(() => {
+      setIsInputLocked(false);
+      setIsScanning(true);
+      lastClickTime.current = Date.now();
+    }, Math.max(400, pressDelayMs / 2));
   };
 
   const handleStartTest = () => {
@@ -514,12 +540,19 @@ export default function App() {
 
   const handleSelect = async () => {
     const now = Date.now();
-    if (now - lastClickTime.current < CLICK_SAFEGUARD_MS) {
-      return; // Safeguard against rapid clicks
+    if (isInputLocked || isSpeakingPrompt || appState !== 'testing' || isWaitingForTeacher) {
+      return; // Suppress input while questions are being asked/read or locked
+    }
+    if (now - lastClickTime.current < pressDelayMs) {
+      return; // Safeguard against rapid clicks / spamming
     }
     lastClickTime.current = now;
+    setIsInputLocked(true);
 
-    if (activeOptions.length === 0) return;
+    if (activeOptions.length === 0) {
+      setIsInputLocked(false);
+      return;
+    }
 
     const selectedItem = activeOptions[currentIndex];
     const originalIndex = selectedItem.originalIndex;
@@ -555,6 +588,7 @@ export default function App() {
           setCurrentIndex(0);
           cycleCountRef.current = 0;
           setIsScanning(false);
+          setIsSpeakingPrompt(true);
           setAppState('wrong-prompt');
           
           const promptToRead = currentQ?.alternatePrompt || currentQ?.questionText || 'Try again';
@@ -564,8 +598,13 @@ export default function App() {
             new Promise(resolve => setTimeout(resolve, 3000))
           ]);
           
+          setIsSpeakingPrompt(false);
           setAppState('testing');
-          if (!isManualAdvanceActive) setIsScanning(true);
+          setTimeout(() => {
+            setIsInputLocked(false);
+            if (!isManualAdvanceActive) setIsScanning(true);
+            lastClickTime.current = Date.now();
+          }, Math.max(500, pressDelayMs / 2));
         }
       } else {
         setResponses((prev) => [...prev, newResponse]);
@@ -991,6 +1030,29 @@ export default function App() {
                     <span>Slow</span>
                   </div>
                 </div>
+
+                <div className="space-y-3 pt-2 border-t border-slate-100">
+                  <div className="flex justify-between">
+                    <div>
+                      <Label>Anti-Spam Press Lockout Delay</Label>
+                      <p className="text-xs text-slate-500">Buffer delay to prevent rapid accidental spamming or pressing while question is asked</p>
+                    </div>
+                    <span className="text-sm font-mono font-bold text-slate-600">{(pressDelayMs / 1000).toFixed(1)}s</span>
+                  </div>
+                  <Slider 
+                    value={[pressDelayMs]} 
+                    onValueChange={(val) => setPressDelayMs(Array.isArray(val) ? val[0] : val)} 
+                    min={500} 
+                    max={4000} 
+                    step={250}
+                    className="py-4"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400 uppercase font-bold tracking-widest">
+                    <span>0.5s (Quick)</span>
+                    <span>1.5s (Standard)</span>
+                    <span>4.0s (High Delay)</span>
+                  </div>
+                </div>
               </div>
             </TabsContent>
 
@@ -1311,14 +1373,20 @@ export default function App() {
           ) : (
             <Button 
               onClick={handleSelect}
-              disabled={!isScanning}
+              disabled={!isScanning || isInputLocked || isSpeakingPrompt}
               className={`h-32 text-4xl font-black uppercase tracking-tighter shadow-xl ${
                 isCVIMode 
                   ? 'bg-yellow-400 text-black hover:bg-yellow-300 disabled:bg-yellow-900/50' 
                   : 'bg-slate-900 hover:bg-slate-800 disabled:opacity-50'
               }`}
             >
-              Select (Space / Enter)
+              {isInputLocked || isSpeakingPrompt ? (
+                <span className="flex items-center justify-center gap-3">
+                  <Lock className="w-8 h-8 opacity-75 animate-pulse" /> Please Wait...
+                </span>
+              ) : (
+                "Select (Space / Enter)"
+              )}
             </Button>
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1529,8 +1597,29 @@ export default function App() {
           <Button variant="outline" onClick={exportToCSV} className="flex-1 h-12 font-bold border-2">
             <Download className="mr-2 w-4 h-4" /> Export CSV
           </Button>
-          <Button onClick={() => window.print()} className="flex-1 h-12 font-bold bg-slate-900">
-            <Save className="mr-2 w-4 h-4" /> Print Results
+          <Button 
+            onClick={() => {
+              try {
+                const fileName = generateAssessmentPDF({
+                  studentId,
+                  testName,
+                  assessmentType,
+                  questions,
+                  responses
+                });
+                toast.success(`Generated official PDF Report: ${fileName}`);
+              } catch (err) {
+                console.error(err);
+                toast.error('Could not generate PDF file directly, opening print view...');
+                window.print();
+              }
+            }} 
+            className="flex-1 h-12 font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md"
+          >
+            <FileText className="mr-2 w-4 h-4" /> Generate PDF Report
+          </Button>
+          <Button variant="outline" onClick={() => window.print()} className="h-12 font-bold border-2 bg-white text-slate-800">
+            <Printer className="mr-2 w-4 h-4" /> Print
           </Button>
         </CardFooter>
       </Card>
